@@ -9,19 +9,23 @@ import torchvision
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import numpy as np
+from ..utils.gridsearch import GridSearch
 from ..utils import solutionmanager as sm
 
 class SolutionModel(nn.Module):
-    def __init__(self, input_size, output_size):
+    def __init__(self, input_size, output_size, solution):
         super(SolutionModel, self).__init__()
         self.input_size = input_size
         self.output_size = output_size
-        self.fc1 = nn.Linear(28*28, 500)
+        self.lr = solution.lr
+        self.momentum = solution.momentum
+        self.fc1 = nn.Linear(input_size, 500)
         self.fc2 = nn.Linear(500, 256)
-        self.fc3 = nn.Linear(256, 10)
+        self.fc3 = nn.Linear(256, output_size)
 
     def forward(self, x):
-        x = x.view(-1, 28*28)
+        x = x.view(-1, self.input_size)
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
@@ -37,17 +41,22 @@ class SolutionModel(nn.Module):
 
 class Solution():
     def __init__(self):
-        self = self
+        self.lr = .1
+        self.momentum = 0.9
+        self.momentum_grid = list(np.linspace(0.5, 1, 10))
+        self.lr_grid = list(np.linspace(0.1, 0.5, 10))
+        self.grid_search = GridSearch(self)
+        self.grid_search.set_enabled(True)
 
     def create_model(self, input_size, output_size):
-        return SolutionModel(input_size, output_size)
+        return SolutionModel(input_size, output_size, self)
 
     # Return number of steps used
     def train_model(self, model, train_data, train_target, context):
         step = 0
         # Put model in train mode
         model.train()
-        optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=.9)
+        optimizer = optim.SGD(model.parameters(), model.lr, model.momentum)
         while True:
             time_left = context.get_timer().get_time_left()
             # No more time left, stop training
