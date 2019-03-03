@@ -23,15 +23,27 @@ class SolutionModel(nn.Module):
         self.momentum = solution.momentum
         self.activation = solution.activation
         self.activations = solution.activations
-        self.fc1 = nn.Linear(input_size, 500)
-        self.fc2 = nn.Linear(500, 256)
-        self.fc3 = nn.Linear(256, output_size)
+        self.hidden0 = solution.hidden0
+        self.hidden1 = solution.hidden1
+        self.hidden2 = solution.hidden2
+        self.conv1 = nn.Conv2d(1, self.hidden0, 5, 1)
+        self.conv2 = nn.Conv2d(self.hidden0, self.hidden1, 5, 1)
+        self.fc1 = nn.Linear(4*4*self.hidden1, self.hidden2)
+        self.fc2 = nn.Linear(self.hidden2, output_size)
+        self.dropout1 = nn.Dropout(0.25)
+        self.dropout2 = nn.Dropout(0.25)
 
     def forward(self, x):
-        x = x.view(-1, self.input_size)
-        x = self.activations[self.activation](self.fc1(x))
-        x = self.activations[self.activation](self.fc2(x))
-        x = self.fc3(x)
+        x = F.relu(self.conv1(x))
+        x = F.max_pool2d(x, 2, 2)
+        x = self.dropout1(x)
+        x = F.relu(self.conv2(x))
+        x = F.max_pool2d(x, 2, 2)
+        x = self.dropout1(x)
+        x = x.view(-1, 4*4*self.hidden1)
+        x = F.relu(self.fc1(x))
+        x = self.dropout2(x)
+        x = self.fc2(x)
         return F.log_softmax(x, dim=1)
 
     def calc_loss(self, output, target):
@@ -45,19 +57,29 @@ class SolutionModel(nn.Module):
 
 class Solution():
     def __init__(self):
-        self.lr = .1
-        self.momentum = 0.9
-        self.momentum_grid = list(np.linspace(0.5, 1, 10))
-        self.lr_grid = list(np.linspace(0.01, 0.05, 10))
+        self.lr = 0.0025
+        self.momentum = 0.1
+        self.hidden0 = 30
+        self.hidden1 = 50
+        self.hidden2 = 500
+        # self.momentum_grid = list(np.linspace(0.1, 1, 10))
+        # self.lr_grid = list(np.linspace(0.8, .9, 50))
+        # self.lr_grid = [5, 6, 7]
+        # self.hidden0_grid = [25, 30, 35, 45]
+        # self.hidden1_grid = [25, 30, 35, 45]
+        # self.hidden2_grid = [175, 200, 225, 250]
+        # self.hidden0_grid = [25, 30, 35, 45]
+        # self.hidden1_grid = [40, 50, 60]
+        # self.hidden2_grid = [300, 400, 500, 600]
         self.activations = {
             'relu6': nn.ReLU6(),
             'leakyrelu': nn.LeakyReLU(negative_slope=0.01),
             'relu': nn.ReLU(),
         }
-        self.activation = 'relu6'
-        self.activation_grid = list(self.activations.keys())
+        self.activation = 'relu'
+        # self.activation_grid = list(self.activations.keys())
         self.grid_search = GridSearch(self)
-        self.grid_search.set_enabled(True)
+        self.grid_search.set_enabled(False)
 
     def create_model(self, input_size, output_size):
         return SolutionModel(input_size, output_size, self)
@@ -68,13 +90,19 @@ class Solution():
         # Put model in train mode
         model.train()
         optimizer = optim.SGD(model.parameters(), model.lr, model.momentum)
+        # optimizer = optim.Adam(model.parameters(), model.lr)
+        batches = 8
+        batch_size = train_data.shape[0] // batches
         while True:
             time_left = context.get_timer().get_time_left()
             # No more time left, stop training
-            # if time_left < 0.1:
-            #     break
-            data = train_data
-            target = train_target
+            if not self.grid_search.enabled and time_left < 0.1:
+                break
+            ind = step % batches
+            start_ind = batch_size * ind
+            end_ind = batch_size * (ind + 1)
+            data = train_data[start_ind:end_ind]
+            target = train_target[start_ind:end_ind]
             # model.parameters()...gradient set to zero
             optimizer.zero_grad()
             # evaluate model => model.forward(data)
@@ -87,18 +115,20 @@ class Solution():
             total = predict.view(-1).size(0)
             # calculate loss
             loss = model.calc_loss(output, target)
-
-            if correct == total or time_left < 0.1:
-                stats = {
-                    'step': step,
-                    'loss': round(loss.item(), 5),
-                    'lr': self.lr,
-                    'activ': self.activation,
-                    'moment': getattr(self, 'momentum', 0)
-                }
-                if self.grid_search.enabled:
-                    results.append(stats)
-                break
+            # if correct == total or time_left < 0.1:
+            #     stats = {
+            #         'step': step,
+            #         'corr': correct,
+            #         'ttl': total,
+            #         'loss': round(loss.item(), 5),
+            #         'lr': self.lr,
+            #         'h0': self.hidden0,
+            #         'h1': self.hidden1,
+            #         'h2': self.hidden2
+            #     }
+            #     if self.grid_search.enabled :#and correct==total:
+            #         self.print_stats(stats)
+            #     break
 
             # calculate deriviative of model.forward() and put it in model.parameters()...gradient
             loss.backward()
@@ -108,10 +138,8 @@ class Solution():
             step += 1
         return step
 
-    def print_stats(self, step, loss, correct, total):
-        if step % 100 == 0:
-            print("Step = {} Prediction = {}/{} Error = {}".format(step,
-                                                                   correct, total, loss.item()))
+    def print_stats(self, stats):
+        print("Step = {} Pred = {}/{} Loss = {}, LR={}, h0={} h1={} h2={}".format(stats['step'], stats['corr'],stats['ttl'],stats['loss'],stats['lr'],stats['h0'],stats['h1'],stats['h2']))
 
 ###
 ###
@@ -185,11 +213,4 @@ class Config:
 
 
 # If you want to run specific case, put number here
-results = []
-sm.SolutionManager(Config()).run(case_number=1)
-
-if results:
-    with open('results.txt', 'w') as f:
-        text = ',\n'.join(str(i) for i in sorted(
-            results, key=operator.itemgetter('step')))
-        f.write(text)
+sm.SolutionManager(Config()).run(case_number=-1)
