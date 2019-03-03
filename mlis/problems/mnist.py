@@ -16,19 +16,16 @@ class SolutionModel(nn.Module):
         super(SolutionModel, self).__init__()
         self.input_size = input_size
         self.output_size = output_size
-        sm.SolutionManager.print_hint("Hint[1]: Experement with more deep networks")
-        self.hidden_size = 10
-        self.linear1 = nn.Linear(self.input_size, self.hidden_size)
-        sm.SolutionManager.print_hint("Hint[2]: You probably would need convolution network for this task")
-        self.linear2 = nn.Linear(self.hidden_size, self.output_size)
+        self.fc1 = nn.Linear(28*28, 500)
+        self.fc2 = nn.Linear(500, 256)
+        self.fc3 = nn.Linear(256, 10)
 
     def forward(self, x):
-        x = x.view(-1, self.input_size)
-        x = self.linear1(x)
-        x = torch.sigmoid(x)
-        x = self.linear2(x)
-        x = F.log_softmax(x, dim=1)
-        return x
+        x = x.view(-1, 28*28)
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return F.log_softmax(x, dim=1)
 
     def calc_loss(self, output, target):
         loss = F.nll_loss(output, target)
@@ -50,19 +47,17 @@ class Solution():
         step = 0
         # Put model in train mode
         model.train()
+        optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=.9)
         while True:
             time_left = context.get_timer().get_time_left()
             # No more time left, stop training
             if time_left < 0.1:
                 break
-            optimizer = optim.SGD(model.parameters(), lr=1.0)
-            sm.SolutionManager.print_hint("Hint[3]: Experement with approximating deriviative based on subset of data", step)
             data = train_data
             target = train_target
             # model.parameters()...gradient set to zero
             optimizer.zero_grad()
             # evaluate model => model.forward(data)
-            sm.SolutionManager.print_hint("Hint[4]: Experement with other activation fuctions", step)
             output = model(data)
             # get the index of the max probability
             predict = model.calc_predict(output)
@@ -72,10 +67,14 @@ class Solution():
             total = predict.view(-1).size(0)
             # calculate loss
             loss = model.calc_loss(output, target)
+
+            if correct == total:
+                self.print_stats(step, loss, correct, total)
+                break
+
             # calculate deriviative of model.forward() and put it in model.parameters()...gradient
             loss.backward()
             # print progress of the learning
-            self.print_stats(step, loss, correct, total)
             # update model: model.parameters() -= lr * gradient
             optimizer.step()
             step += 1
