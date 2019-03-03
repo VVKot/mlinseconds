@@ -13,6 +13,7 @@ import numpy as np
 from ..utils.gridsearch import GridSearch
 from ..utils import solutionmanager as sm
 
+
 class SolutionModel(nn.Module):
     def __init__(self, input_size, output_size, solution):
         super(SolutionModel, self).__init__()
@@ -20,14 +21,16 @@ class SolutionModel(nn.Module):
         self.output_size = output_size
         self.lr = solution.lr
         self.momentum = solution.momentum
+        self.activation = solution.activation
+        self.activations = solution.activations
         self.fc1 = nn.Linear(input_size, 500)
         self.fc2 = nn.Linear(500, 256)
         self.fc3 = nn.Linear(256, output_size)
 
     def forward(self, x):
         x = x.view(-1, self.input_size)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
+        x = self.activations[self.activation](self.fc1(x))
+        x = self.activations[self.activation](self.fc2(x))
         x = self.fc3(x)
         return F.log_softmax(x, dim=1)
 
@@ -39,12 +42,20 @@ class SolutionModel(nn.Module):
         predict = output.max(1, keepdim=True)[1]
         return predict
 
+
 class Solution():
     def __init__(self):
         self.lr = .1
         self.momentum = 0.9
         self.momentum_grid = list(np.linspace(0.5, 1, 10))
-        self.lr_grid = list(np.linspace(0.1, 0.5, 10))
+        self.lr_grid = list(np.linspace(0.01, 0.05, 10))
+        self.activations = {
+            'relu6': nn.ReLU6(),
+            'leakyrelu': nn.LeakyReLU(negative_slope=0.01),
+            'relu': nn.ReLU(),
+        }
+        self.activation = 'relu6'
+        self.activation_grid = list(self.activations.keys())
         self.grid_search = GridSearch(self)
         self.grid_search.set_enabled(True)
 
@@ -60,8 +71,8 @@ class Solution():
         while True:
             time_left = context.get_timer().get_time_left()
             # No more time left, stop training
-            if time_left < 0.1:
-                break
+            # if time_left < 0.1:
+            #     break
             data = train_data
             target = train_target
             # model.parameters()...gradient set to zero
@@ -77,8 +88,16 @@ class Solution():
             # calculate loss
             loss = model.calc_loss(output, target)
 
-            if correct == total:
-                self.print_stats(step, loss, correct, total)
+            if correct == total or time_left < 0.1:
+                stats = {
+                    'step': step,
+                    'loss': round(loss.item(), 5),
+                    'lr': self.lr,
+                    'activ': self.activation,
+                    'moment': getattr(self, 'momentum', 0)
+                }
+                if self.grid_search.enabled:
+                    results.append(stats)
                 break
 
             # calculate deriviative of model.forward() and put it in model.parameters()...gradient
@@ -88,21 +107,25 @@ class Solution():
             optimizer.step()
             step += 1
         return step
-    
+
     def print_stats(self, step, loss, correct, total):
         if step % 100 == 0:
-            print("Step = {} Prediction = {}/{} Error = {}".format(step, correct, total, loss.item()))
+            print("Step = {} Prediction = {}/{} Error = {}".format(step,
+                                                                   correct, total, loss.item()))
 
 ###
 ###
-### Don't change code after this line
+# Don't change code after this line
 ###
 ###
+
+
 class Limits:
     def __init__(self):
         self.time_limit = 2.0
         self.size_limit = 1000000
         self.test_limit = 0.95
+
 
 class DataProvider:
     def __init__(self):
@@ -112,12 +135,14 @@ class DataProvider:
             './data/data_mnist', train=True, download=True,
             transform=torchvision.transforms.ToTensor()
         )
-        trainLoader = torch.utils.data.DataLoader(train_dataset, batch_size=len(train_dataset))
+        trainLoader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=len(train_dataset))
         test_dataset = torchvision.datasets.MNIST(
             './data/data_mnist', train=False, download=True,
             transform=torchvision.transforms.ToTensor()
         )
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=len(test_dataset))
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=len(test_dataset))
         self.train_data = next(iter(trainLoader))
         self.test_data = next(iter(test_loader))
         print("Data loaded")
@@ -127,12 +152,12 @@ class DataProvider:
         mask = target == -1
         for digit in digits:
             mask |= target == digit
-        indices = torch.arange(0,mask.size(0))[mask].long()
+        indices = torch.arange(0, mask.size(0))[mask].long()
         return (torch.index_select(data, dim=0, index=indices), target[mask])
 
     def create_case_data(self, case):
         if case == 1:
-            digits = [0,1]
+            digits = [0, 1]
         elif case == 2:
             digits = [8, 9]
         else:
@@ -147,6 +172,7 @@ class DataProvider:
         test_data = self.select_data(self.test_data, digits)
         return sm.CaseData(case, Limits(), train_data, test_data).set_description(description).set_output_size(10)
 
+
 class Config:
     def __init__(self):
         self.max_samples = 1000
@@ -157,5 +183,13 @@ class Config:
     def get_solution(self):
         return Solution()
 
+
 # If you want to run specific case, put number here
-sm.SolutionManager(Config()).run(case_number=-1)
+results = []
+sm.SolutionManager(Config()).run(case_number=1)
+
+if results:
+    with open('results.txt', 'w') as f:
+        text = ',\n'.join(str(i) for i in sorted(
+            results, key=operator.itemgetter('step')))
+        f.write(text)
